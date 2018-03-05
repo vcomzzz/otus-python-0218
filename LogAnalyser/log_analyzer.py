@@ -23,110 +23,103 @@ from string import Template
 import heapq
 import subprocess
 import time
+from collections import namedtuple
 
 
 config = {
     "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
-    "REPORT_TEMPLATE": "./reports/report.html",
+    "REPORT_TEMPLATE": "./report.html",
     "LOG_DIR": "./log",
     "LOGGING": None,
     "TS": "./log_analyzer.ts",
     "CRITICAL_PERC_ERR": 50,
 }
 
-
-def main():
-    # build config
-    conf = config
-    comline_parser = argparse.ArgumentParser()
-    comline_parser.add_argument('--config', help='external config', default='./config.json')
-    cl_args = comline_parser.parse_args()
-    with open(cl_args.config) as json_file:
-        ext_config = json.load(json_file)
-        conf = {**config, **ext_config}
-
-    conf.setdefault("LOGGING", None)
-    logging.basicConfig(format = '[%(asctime)s] %(levelname).1s %(message)s', datefmt = '%Y.%m.%d %H:%M:%S',
-                        level = logging.INFO,
-                        filename = conf["LOGGING"])
-
-    logging.info('log_analyzer started with config: ' + str(conf))
+def get_log_file(conf):
+    LogFile = namedtuple('LogFile' , 'path date')
 
     # find log to process
     all_logs = glob.glob(os.path.join(conf["LOG_DIR"], 'nginx-access-ui.log-*'))
-    mylog = (None, 0)
+    my_log = LogFile(None, 0)
     for lg in all_logs:
         dt = re.search('([0-9]+)(.gz){0,1}$', lg)
         if dt is not None:
             idt = dt.group(1)
-            if int(idt) > int(mylog[1]):
-                mylog = (lg, idt)
+            if int(idt) > int(my_log.date):
+                my_log = LogFile(lg, idt)
 
-    if mylog[0] is None:
+    if my_log.path is None:
         logging.error('there are no propriate logs')
         sys.exit()
     else:
-        logging.info('trying to parse ' + mylog[0])
+        logging.info('found apropriate log-file: ' + my_log.path)
+    return my_log
 
-    d = mylog[1]
-    rep_file = 'report-' + d[:4] + '.' + d[4:6] + '.' + d[6:8] + '.html'
+
+def get_report_path(conf, my_log):
+    rep_file = 'report-{}.{}.{}.html'.format(my_log.date[:4], my_log.date[4:6], my_log.date[6:])
     rep_path = os.path.join(conf["REPORT_DIR"], rep_file)
 
+    if not os.path.exists(conf["REPORT_DIR"]):
+        os.makedirs(conf["REPORT_DIR"])
+
     if os.path.isfile(rep_path):
-        logging.error('report was already created: ' + rep_path)
+        logging.info('report was already created: ' + rep_path)
         sys.exit()
+    return rep_path
 
-    # get the number of lines to parse
+
+def log_line_parser(log_file):
+    req_rec = re.compile('((GET|POST|HEAD)\s+\S+)\s+')
+    time_rec = re.compile('\s+[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$')
+
+    with gzip.open(log_file, 'rt') if log_file.endswith(".gz") else open(log_file) as fl:
+        for line in fl:
+            rs_rq = req_rec.search(line.strip())
+            rs_tm = time_rec.search(line.strip())
+            if rs_rq is None or rs_tm is None:
+                yield None
+            else:
+                request = rs_rq.group(1)
+                req_time = float(rs_tm.group(1))
+                yield (request, req_time)
+
+
+def get_critical_number_of_lines(my_log, conf):
     try:
-        wc_com = 'gunzip -c {} | wc -l' if mylog[0].endswith(".gz") else 'wc -l {}'
-        r = subprocess.check_output(wc_com.format(mylog[0]), shell=True)
+        wc_com = 'gunzip -c {} | wc -l' if my_log.path.endswith(".gz") else 'wc -l {}'
+        r = subprocess.check_output(wc_com.format(my_log.path), shell=True)
     except CalledProcessError:
-        logging.error('cannot count the number of lines in ' + mylog[0])
+        logging.error('cannot count the number of lines in the log')
         sys.exit()
-
     num_lines = int(r.decode().strip().partition(' ')[0])
     if not num_lines > 0:
-        logging.error('there are no lines in ' + mylog[0])
+        logging.error('there are no lines in log')
         sys.exit()
-    n_errs_critical = num_lines * conf["CRITICAL_PERC_ERR"] / 100.0
+    return num_lines * conf["CRITICAL_PERC_ERR"] / 100.0
 
-    # parse log
+
+def log_parser(line_parser, conf, n_errs_critical):
     tmdata = {}
     sumtime = {}
     num_lines_good = 0
     n_errs = 0
     alltime = 0.00
-    reqrec = re.compile('((GET|POST|HEAD)\s+\S+)\s+')
-    timerec = re.compile('\s+[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$')
 
-    try:
-        with gzip.open(mylog[0], 'rt') if mylog[0].endswith(".gz") else open(mylog[0]) as flog:
-            for line in flog:
-                rs_rq = reqrec.search(line.strip())
-                rs_tm = timerec.search(line.strip())
-                if rs_rq is None or rs_tm is None:
-                    logging.error('cannot parse line: ' + line.strip())
-                    n_errs += 1
-                    if n_errs > n_errs_critical:
-                        raise ValueError
-                else:
-                    request = rs_rq.group(1)
-                    req_time = float(rs_tm.group(1))
-                    tmdata.setdefault(request, []).append(req_time)
-                    sumtime[request] = sumtime.get(request, 0.00) + req_time
-                    num_lines_good += 1
-                    alltime += req_time
+    for line in line_parser:
+        if line is None:
+            n_errs += 1
+            if n_errs > n_errs_critical:
+                logging.error('too many incorrect lines in the log')
+                sys.exit()
+        else:
+            request, req_time = line
+            tmdata.setdefault(request, []).append(req_time)
+            sumtime[request] = sumtime.get(request, 0.00) + req_time
+            num_lines_good += 1
+            alltime += req_time
 
-    except IOError as e:
-        logging.exception("I/O error({0}): {1}".format(e.errno, e.strerror))
-        sys.exit()
-    except ValueError:
-        logging.error('too many incorrect lines in the log: >' + conf["CRITICAL_PERC_ERR"] + '%')
-        sys.exit()
-    except :
-        logging.exception('somthing goes wrong while reading log')
-        sys.exit()
     if not alltime > 0.00:
         logging.error('all times in the log equal to zero')
         sys.exit()
@@ -146,34 +139,62 @@ def main():
                 "time_med":   '{:.3f}'.format(np.median(tm)) }
         rep_table.append(rec)
 
-    # get template
+    return rep_table
+
+
+def render_report(rep_table, conf):
     templ_file = conf["REPORT_TEMPLATE"]
-    try:
-        with open(templ_file, 'r') as tf:
-            templ = tf.read()
-    except IOError as e:
-        logging.exception("cannot read template " + templ_file + "- I/O error({0}): {1}".format(e.errno, e.strerror))
-        sys.exit()
+    with open(templ_file, 'r') as tf:
+        templ = tf.read()
     if len(templ) < 10:
         logging.error('incorrect template in ' + templ_file)
         sys.exit()
 
-    # render
-    report = Template(templ).safe_substitute(table_json = json.dumps(rep_table))
+    return Template(templ).safe_substitute(table_json = json.dumps(rep_table))
 
-    try:
-        with open(rep_path, 'w') as rf:
-            rf.write(report)
 
-            logging.info('report created here: ' + rep_path)
-            timestr = time.strftime("%Y%m%d-%H%M%S")
-            with open(conf["TS"], 'w') as tsf:
-                tsf.write(timestr)
+def main(conf):
+    logging.info('log_analyzer started with config: ' + str(conf))
 
-    except IOError as e:
-        logging.exception("I/O error({0}): {1}".format(e.errno, e.strerror))
-        sys.exit()
+    # find out log-file to parse
+    my_log = get_log_file(conf)
+
+    # get path to report in
+    rep_path = get_report_path(conf, my_log)
+
+    # find out the critical number of error lines
+    n_errs_critical = get_critical_number_of_lines(my_log, conf)
+
+    # parse log-file and build result table
+    rep_table = log_parser(log_line_parser(my_log.path), conf, n_errs_critical)
+
+    # render report
+    report = render_report(rep_table, conf)
+
+    # write report
+    with open(rep_path, 'w') as rf:
+        rf.write(report)
+
+    logging.info('report created here: ' + rep_path)
+    timestr = time.strftime("%Y%m%d-%H%M%S")
+    with open(conf["TS"], 'w') as tsf:
+         tsf.write(timestr)
 
 
 if __name__ == "__main__":
-    main()
+    conf = config
+    comline_parser = argparse.ArgumentParser()
+    comline_parser.add_argument('--config', help='external config', default='./config.json')
+    args = comline_parser.parse_args()
+
+    with open(args.config) as json_file:
+        ext_config = json.load(json_file)
+        conf = {**config, **ext_config}
+
+    logging.basicConfig(format = '[%(asctime)s] %(levelname).1s %(message)s', datefmt = '%Y.%m.%d %H:%M:%S',
+                        level = logging.INFO,
+                        filename = conf["LOGGING"])
+    try:
+        main(conf)
+    except:
+        logging.exception()
