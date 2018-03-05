@@ -1,0 +1,8 @@
+Запуск анализатора логов:
+python3 log_analyzer.py
+
+Получить помощь по log_analyzer:
+python3 log_analyzer.py -h
+
+Запуск тестов для log_analyzer:
+python3 test.py
