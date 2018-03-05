@@ -1,0 +1,9 @@
+{
+    "REPORT_SIZE": 2,
+    "REPORT_DIR": "./test",
+    "REPORT_TEMPLATE": "./test/report.template",
+    "LOG_DIR": "./test",
+    "LOGGING": "./test/log_analyzer.log",
+    "TS": "./test/log_analyzer.ts",
+    "CRITICAL_PERC_ERR": 50
+}
