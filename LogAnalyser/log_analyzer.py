@@ -36,8 +36,9 @@ config = {
     "CRITICAL_PERC_ERR": 50,
 }
 
+
 def get_log_file(conf):
-    LogFile = namedtuple('LogFile' , 'path date')
+    LogFile = namedtuple('LogFile', 'path date')
 
     # find log to process
     all_logs = glob.glob(os.path.join(conf["LOG_DIR"], 'nginx-access-ui.log-*'))
@@ -129,16 +130,15 @@ def log_parser(line_parser, conf, n_errs_critical):
     rep_table = []
     for url in urlviz:
         tm = np.array(tmdata[url])
-        rec = { "url": url,
-                "count": tm.size,
-                "count_perc": '{:.3f}'.format(100.0 * tm.size / num_lines_good),
-                "time_sum":   '{:.3f}'.format(np.sum(tm)),
-                "time_avg":   '{:.3f}'.format(np.average(tm)),
-                "time_perc":  '{:.3f}'.format(100.0 * np.sum(tm) / alltime),
-                "time_max":   '{:.3f}'.format(np.max(tm)),
-                "time_med":   '{:.3f}'.format(np.median(tm)) }
+        rec = {"url": url,
+               "count": tm.size,
+               "count_perc": '{:.3f}'.format(100.0 * tm.size / num_lines_good),
+               "time_sum":   '{:.3f}'.format(np.sum(tm)),
+               "time_avg":   '{:.3f}'.format(np.average(tm)),
+               "time_perc":  '{:.3f}'.format(100.0 * np.sum(tm) / alltime),
+               "time_max":   '{:.3f}'.format(np.max(tm)),
+               "time_med":   '{:.3f}'.format(np.median(tm))}
         rep_table.append(rec)
-
     return rep_table
 
 
@@ -149,8 +149,7 @@ def render_report(rep_table, conf):
     if len(templ) < 10:
         logging.error('incorrect template in ' + templ_file)
         sys.exit()
-
-    return Template(templ).safe_substitute(table_json = json.dumps(rep_table))
+    return Template(templ).safe_substitute(table_json=json.dumps(rep_table))
 
 
 def main(conf):
@@ -178,7 +177,7 @@ def main(conf):
     logging.info('report created here: ' + rep_path)
     timestr = time.strftime("%Y%m%d-%H%M%S")
     with open(conf["TS"], 'w') as tsf:
-         tsf.write(timestr)
+        tsf.write(timestr)
 
 
 if __name__ == "__main__":
@@ -191,9 +190,10 @@ if __name__ == "__main__":
         ext_config = json.load(json_file)
         conf = {**config, **ext_config}
 
-    logging.basicConfig(format = '[%(asctime)s] %(levelname).1s %(message)s', datefmt = '%Y.%m.%d %H:%M:%S',
-                        level = logging.INFO,
-                        filename = conf["LOGGING"])
+    logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s',
+                        datefmt='%Y.%m.%d %H:%M:%S',
+                        level=logging.INFO,
+                        filename=conf["LOGGING"])
     try:
         main(conf)
     except:

@@ -14,22 +14,22 @@ import subprocess
 
 
 proper_table = \
-[ { 'url': 'GET url1',
-    'count': 4,
-    'count_perc': 25.0,
-    'time_max': 4.0,
-    'time_sum': 10.0,
-    'time_med': 2.5,
-    'time_perc': 34.5,
-    'time_avg': 2.5 },
-  { 'url': 'GET url4',
-    'count': 4,
-    'count_perc': 25.0,
-    'time_max': 2.5,
-    'time_sum': 8.0,
-    'time_med': 2.0,
-    'time_perc': 27.6,
-    'time_avg': 2.0} ]
+    [{'url': 'GET url1',
+      'count': 4,
+      'count_perc': 25.0,
+      'time_max': 4.0,
+      'time_sum': 10.0,
+      'time_med': 2.5,
+      'time_perc': 34.5,
+      'time_avg': 2.5},
+     {'url': 'GET url4',
+      'count': 4,
+      'count_perc': 25.0,
+      'time_max': 2.5,
+      'time_sum': 8.0,
+      'time_med': 2.0,
+      'time_perc': 27.6,
+      'time_avg': 2.0}]
 
 
 class AnalyzerTestCase(unittest.TestCase):
@@ -54,9 +54,10 @@ class AnalyzerTestCase(unittest.TestCase):
             for k, v in rp.items():
                 self.assertIn(k, rt, msg='table does not contain ' + k)
                 if not k == 'url':
-                    self.assertAlmostEqual(float(rp[k]), float(rt[k]), delta=0.1, msg='incorrect '+ k)
+                    self.assertAlmostEqual(float(rp[k]), float(rt[k]), delta=0.1, msg='incorrect '+k)
                 else:
                     self.assertEqual(rp[k], rt[k], msg='different urls were chosen')
+
 
 if __name__ == '__main__':
     unittest.main()
