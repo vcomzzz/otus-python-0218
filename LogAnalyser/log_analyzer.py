@@ -39,23 +39,21 @@ config = {
 
 def get_log_file(conf):
     LogFile = namedtuple('LogFile', 'path date')
+    my_log = LogFile(None, None)
 
     # find log to process
-    all_logs = glob.glob(os.path.join(conf["LOG_DIR"], 'nginx-access-ui.log-*'))
-    my_log = LogFile(None, 0)
-    for lg in all_logs:
-        dt = re.search('([0-9]+)(.gz){0,1}$', lg)
+    log_templ = os.path.join(conf["LOG_DIR"], 'nginx-access-ui.log-*')
+    log_list = glob.glob(log_templ)
+    if len(log_list) > 0:
+        last_log = sorted(log_list, key=os.path.getmtime)[0]
+        dt = re.search('([0-9]+)(.gz){0,1}$', last_log)
         if dt is not None:
-            idt = dt.group(1)
-            if int(idt) > int(my_log.date):
-                my_log = LogFile(lg, idt)
-
+            my_log = LogFile(last_log, dt.group(1))
+            logging.info('found apropriate log-file: ' + my_log.path)
+            return my_log
     if my_log.path is None:
         logging.error('there are no propriate logs')
-        sys.exit()
-    else:
-        logging.info('found apropriate log-file: ' + my_log.path)
-    return my_log
+        raise FileNotFoundError
 
 
 def get_report_path(conf, my_log):
@@ -67,7 +65,7 @@ def get_report_path(conf, my_log):
 
     if os.path.isfile(rep_path):
         logging.info('report was already created: ' + rep_path)
-        sys.exit()
+        raise FileExistsError
     return rep_path
 
 
@@ -87,43 +85,29 @@ def log_line_parser(log_file):
                 yield (request, req_time)
 
 
-def get_critical_number_of_lines(my_log, conf):
-    try:
-        wc_com = 'gunzip -c {} | wc -l' if my_log.path.endswith(".gz") else 'wc -l {}'
-        r = subprocess.check_output(wc_com.format(my_log.path), shell=True)
-    except CalledProcessError:
-        logging.error('cannot count the number of lines in the log')
-        sys.exit()
-    num_lines = int(r.decode().strip().partition(' ')[0])
-    if not num_lines > 0:
-        logging.error('there are no lines in log')
-        sys.exit()
-    return num_lines * conf["CRITICAL_PERC_ERR"] / 100.0
-
-
-def log_parser(line_parser, conf, n_errs_critical):
+def log_parser(line_parser, conf):
     tmdata = {}
     sumtime = {}
-    num_lines_good = 0
-    n_errs = 0
+    n_lines_ok = 0
+    n_lines_err = 0
     alltime = 0.00
 
     for line in line_parser:
         if line is None:
-            n_errs += 1
-            if n_errs > n_errs_critical:
-                logging.error('too many incorrect lines in the log')
-                sys.exit()
+            n_lines_err += 1
         else:
             request, req_time = line
             tmdata.setdefault(request, []).append(req_time)
             sumtime[request] = sumtime.get(request, 0.00) + req_time
-            num_lines_good += 1
+            n_lines_ok += 1
             alltime += req_time
 
+    if n_lines_err > (n_lines_err + n_lines_ok) * conf["CRITICAL_PERC_ERR"] / 100.0:
+        logging.error('too many incorrect lines in the log')
+        raise ValueError
     if not alltime > 0.00:
         logging.error('all times in the log equal to zero')
-        sys.exit()
+        raise ValueError
 
     # build report table
     urlviz = list(heapq.nlargest(conf["REPORT_SIZE"], sumtime.keys(), lambda x: sumtime[x]))
@@ -132,7 +116,7 @@ def log_parser(line_parser, conf, n_errs_critical):
         tm = np.array(tmdata[url])
         rec = {"url": url,
                "count": tm.size,
-               "count_perc": '{:.3f}'.format(100.0 * tm.size / num_lines_good),
+               "count_perc": '{:.3f}'.format(100.0 * tm.size / n_lines_ok),
                "time_sum":   '{:.3f}'.format(np.sum(tm)),
                "time_avg":   '{:.3f}'.format(np.average(tm)),
                "time_perc":  '{:.3f}'.format(100.0 * np.sum(tm) / alltime),
@@ -143,12 +127,11 @@ def log_parser(line_parser, conf, n_errs_critical):
 
 
 def render_report(rep_table, conf):
-    templ_file = conf["REPORT_TEMPLATE"]
-    with open(templ_file, 'r') as tf:
+    with open(conf["REPORT_TEMPLATE"], 'r') as tf:
         templ = tf.read()
     if len(templ) < 10:
         logging.error('incorrect template in ' + templ_file)
-        sys.exit()
+        raise ValueError
     return Template(templ).safe_substitute(table_json=json.dumps(rep_table))
 
 
@@ -161,11 +144,8 @@ def main(conf):
     # get path to report in
     rep_path = get_report_path(conf, my_log)
 
-    # find out the critical number of error lines
-    n_errs_critical = get_critical_number_of_lines(my_log, conf)
-
     # parse log-file and build result table
-    rep_table = log_parser(log_line_parser(my_log.path), conf, n_errs_critical)
+    rep_table = log_parser(log_line_parser(my_log.path), conf)
 
     # render report
     report = render_report(rep_table, conf)
@@ -186,9 +166,12 @@ if __name__ == "__main__":
     comline_parser.add_argument('--config', help='external config', default='./config.json')
     args = comline_parser.parse_args()
 
-    with open(args.config) as json_file:
-        ext_config = json.load(json_file)
-        conf = {**config, **ext_config}
+    try:
+        with open(args.config) as json_file:
+            ext_config = json.load(json_file)
+            conf = {**config, **ext_config}
+    except:
+        print('cannot read config-file: {}'.format(args.config), file = sys.stderr)
 
     logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s',
                         datefmt='%Y.%m.%d %H:%M:%S',
@@ -197,4 +180,4 @@ if __name__ == "__main__":
     try:
         main(conf)
     except:
-        logging.exception()
+        logging.exception('script was interrupted')
