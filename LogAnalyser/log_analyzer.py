@@ -45,7 +45,7 @@ def get_log_file(conf):
     log_templ = os.path.join(conf["LOG_DIR"], 'nginx-access-ui.log-*')
     log_list = glob.glob(log_templ)
     if len(log_list) > 0:
-        last_log = sorted(log_list, key=os.path.getmtime)[0]
+        last_log = sorted(log_list, key=os.path.getmtime)[-1]
         dt = re.search('([0-9]+)(.gz){0,1}$', last_log)
         if dt is not None:
             my_log = LogFile(last_log, dt.group(1))
